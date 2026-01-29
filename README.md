@@ -2,7 +2,7 @@
 
 Unsung Browser — a lightweight, privacy-first web browser written in Rust and designed to run locally on the user's system. It's built to be minimal, configurable, and easy to run from source or a local binary.
 
-> NOTE: This README is intentionally generic so it applies regardless of which web-rendering backend (wry/webview2/webkit/servo/etc.) you use. Replace placeholders and the "Platform-specific deps" section with exact package names and commands after confirming the project's dependencies.
+> NOTE: This project is still in development and no offical release has been made please feel free to clone it if you want to but note there is some errors in the code i need to fix 
 
 ## Features
 
