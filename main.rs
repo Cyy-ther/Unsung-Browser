@@ -310,8 +310,7 @@ fn main() {
         function addToHistory(url) {
             if (historyIndex < history.length - 1) history.splice(historyIndex + 1);
             history.push(url);
-            historyIndex++;
-        }
+            historyIndex++;}
         function goBack() {
             if (historyIndex > 0) { historyIndex--; loadUrl(history[historyIndex], false); }
         }
@@ -384,8 +383,8 @@ fn main() {
     let wv = WebViewBuilder::new()
         .with_html(html_content)
         .with_bounds(wry::Rect {
-            position: PhysicalPosition::new(0, 0),
-            size: PhysicalSize::new(size.width, size.height),
+            position: PhysicalPosition::new(0, 0).into(),
+            size: PhysicalSize::new(size.width, size.height).into(),
         })
         .with_ipc_handler(move |request| {
             #[derive(Deserialize)]
@@ -416,6 +415,5 @@ fn main() {
         *control_flow = ControlFlow::Wait;
         if let Event::WindowEvent { event: WindowEvent::CloseRequested, .. } = event {
             *control_flow = ControlFlow::Exit;
-        }
-    });
+        }});
 }
