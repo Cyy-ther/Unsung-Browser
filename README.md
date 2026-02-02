@@ -46,7 +46,7 @@ cargo run
 # On Windows replace with: target\release\unsung-browser.exe
 ```
 
-How to build the web-server (G++)
+How to build the web-server (G++) (debug)
 ```sh
 g++ main.cpp -o cypher_proxy.exe -static -lws2_32 -lwininet -static-libgcc -static-libstdc++
 ```
