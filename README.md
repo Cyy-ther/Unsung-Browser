@@ -1,5 +1,7 @@
 # Unsung Browser
 
+>NOTE: This project is only supported for windows at the moment so Unix/Linux or MacOS systems will not work and or have not been tested please keep this in mind 
+
 Unsung Browser — a lightweight, privacy-first web browser written in Rust and designed to run locally on the user's system. It's built to be minimal, configurable, and easy to run from source or a local binary.
 
 > NOTE: This project is still in development and no offical release has been made please feel free to clone it if you want to but note there is some errors in the code i need to fix 
@@ -10,7 +12,6 @@ Unsung Browser — a lightweight, privacy-first web browser written in Rust and 
 - Runs locally on the user's machine — no cloud service required
 - Minimal UI with focus on privacy and local control
 - Configurable profile and data directory
-- Designed for cross-platform builds (Linux, macOS, Windows) — platform support depends on chosen rendering backend
 - Developer-friendly: cargo-based build and run workflow
 - Self Ran webserver for privacy 
 
