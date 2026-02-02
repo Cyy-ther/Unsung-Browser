@@ -12,6 +12,7 @@ Unsung Browser — a lightweight, privacy-first web browser written in Rust and 
 - Configurable profile and data directory
 - Designed for cross-platform builds (Linux, macOS, Windows) — platform support depends on chosen rendering backend
 - Developer-friendly: cargo-based build and run workflow
+- Self Ran webserver for privacy 
 
 ## Quick Start (for developers)
 
@@ -43,3 +44,14 @@ cargo run
 # Or run the release binary
 ./target/release/unsung-browser
 # On Windows replace with: target\release\unsung-browser.exe
+```
+
+How to build the web-server (G++)
+```sh
+g++ main.cpp -o cypher_proxy.exe -static -lws2_32 -lwininet -static-libgcc -static-libstdc++
+```
+
+
+
+
+
