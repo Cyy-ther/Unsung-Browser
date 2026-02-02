@@ -3,7 +3,6 @@ use tao::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     window::WindowBuilder,
-    dpi::{PhysicalPosition, PhysicalSize},
 };
 use wry::WebViewBuilder;
 use serde::{Deserialize, Serialize};
@@ -15,6 +14,50 @@ struct SearchResult {
     title: String,
     url: String,
     snippet: String,
+}
+
+#[derive(Deserialize, Serialize)]
+struct NavigateMessage {
+    action: String,
+    url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ProxyResponse {
+    success: bool,
+    content: Option<String>,
+    error: Option<String>,
+}
+
+fn fetch_through_proxy(url: &str) -> Result<String, String> {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to create client: {}", e))?;
+
+    let json_body = serde_json::json!({
+        "url": url
+    });
+
+    match client
+        .post("http://localhost:8080/fetch")
+        .json(&json_body)
+        .send(){
+        Ok(response) => {
+            let response_text = response.text()
+                .map_err(|e| format!("Failed to read response: {}", e))?;
+
+            let json: ProxyResponse = serde_json::from_str(&response_text)
+                .map_err(|e| format!("Invalid JSON response: {}", e))?;
+
+            if json.success {
+                Ok(json.content.unwrap_or_default())
+            } else {
+                Err(json.error.unwrap_or_else(|| "Unknown error".to_string()))
+            }
+        }
+        Err(e) => Err(format!("Request failed: {}. Make sure your C++ server is running on port 8080", e))
+    }
 }
 
 fn fetch_search_results(query: &str) -> Vec<SearchResult> {
@@ -84,7 +127,7 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let html_content = r#"<!DOCTYPE html>
+    let home_html = r#"<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -98,6 +141,7 @@ fn main() {
             height: 100vh;
             display: flex;
             flex-direction: column;
+            overflow: hidden;
         }
         .top-bar {
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -107,6 +151,8 @@ fn main() {
             gap: 15px;
             border-bottom: 2px solid #0f3460;
             box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            z-index: 1000;
+            flex-shrink: 0;
         }
         .logo {
             font-size: 24px;
@@ -166,11 +212,18 @@ fn main() {
         .content {
             flex: 1;
             overflow-y: auto;
-            padding: 30px;
             background: linear-gradient(to bottom, #0a0a0a 0%, #1a1a2e 100%);
+            position: relative;
         }
-        .home-screen { max-width: 1000px; margin: 0 auto; text-align: center; }
-        .hero { margin-bottom: 60px; padding: 40px 0; }
+        .home-screen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 60px 20px;
+            min-height: 100%;
+        }
+        .hero { text-align: center; margin-bottom: 60px; }
         .hero h1 {
             font-size: 72px;
             font-weight: 900;
@@ -188,7 +241,8 @@ fn main() {
             padding: 10px;
             display: flex;
             max-width: 700px;
-            margin: 0 auto 60px auto;
+            width: 100%;
+            margin-bottom: 60px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.3);
         }
         #searchInput {
@@ -212,7 +266,33 @@ fn main() {
             transition: all 0.3s;
         }
         .search-btn:hover { transform: scale(1.05); box-shadow: 0 5px 30px rgba(102,126,234,0.5); }
-        .loading { text-align: center; padding: 60px 20px; }
+        .quick-links {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            max-width: 900px;
+            width: 100%;
+        }
+        .quick-link {
+            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .quick-link:hover { background: rgba(255,255,255,0.08); border-color: #667eea; transform: translateY(-5px); }
+        .quick-link .icon { font-size: 48px; margin-bottom: 15px; }
+        .quick-link .name { color: white; font-weight: 600; font-size: 16px; }
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 60px 20px;
+            min-height: 100%;
+        }
         .spinner {
             width: 60px;
             height: 60px;
@@ -220,10 +300,21 @@ fn main() {
             border-top-color: #667eea;
             border-radius: 50%;
             animation: spin 1s linear infinite;
-            margin: 0 auto 20px auto;
+            margin-bottom: 20px;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .results { max-width: 900px; margin: 0 auto; }
+        .results {
+            max-width: 900px;
+            width: 100%;
+            padding: 40px 20px;
+            margin: 0 auto;
+        }
+        .results h2 {
+            color: rgba(255,255,255,0.9);
+            margin-bottom: 30px;
+            font-size: 28px;
+            text-align: center;
+        }
         .result-item {
             background: rgba(255,255,255,0.05);
             border: 1px solid rgba(255,255,255,0.1);
@@ -242,37 +333,28 @@ fn main() {
         .result-item h3 { color: #667eea; font-size: 22px; margin-bottom: 10px; font-weight: 600; }
         .result-item .url { color: #10b981; font-size: 14px; margin-bottom: 12px; word-break: break-all; }
         .result-item .snippet { color: rgba(255,255,255,0.7); line-height: 1.6; font-size: 15px; }
-        .quick-links {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            max-width: 900px;
-            margin: 0 auto;
+        .iframe-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            background: white;
         }
-        .quick-link {
-            background: rgba(255,255,255,0.05);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 12px;
-            padding: 20px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        .quick-link:hover { background: rgba(255,255,255,0.08); border-color: #667eea; transform: translateY(-5px); }
-        .quick-link .icon { font-size: 32px; margin-bottom: 10px; }
-        .quick-link .name { color: white; font-weight: 600; }
-        .iframe-container { width: 100%; height: calc(100vh - 80px); background: white; }
-        .iframe-container iframe { width: 100%; height: 100%; border: none; }
-    </style>
+        .iframe-container iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }</style>
 </head>
 <body>
     <div class="top-bar">
         <div class="logo">🔮 CYPHER</div>
         <div class="nav-buttons">
-            <button class="nav-btn" onclick="goBack()">◄</button>
-            <button class="nav-btn" onclick="goForward()">►</button>
-            <button class="nav-btn" onclick="reload()">↻</button>
-            <button class="nav-btn" onclick="goHome()">🏠</button>
+            <button class="nav-btn" onclick="goBack()" title="Back">◄</button>
+            <button class="nav-btn" onclick="goForward()" title="Forward">►</button>
+            <button class="nav-btn" onclick="reload()" title="Reload">↻</button>
+            <button class="nav-btn" onclick="goHome()" title="Home">🏠</button>
         </div>
         <div class="url-bar">
             <input type="text" id="urlInput" placeholder="Search or enter URL..." />
@@ -282,7 +364,7 @@ fn main() {
     <div class="content" id="content">
         <div class="home-screen">
             <div class="hero">
-                <h1>CYPHER</h1>
+                <h1>🔮 CYPHER</h1>
                 <p>Your Gateway to the Internet</p>
             </div>
             <div class="search-container">
@@ -291,34 +373,99 @@ fn main() {
             </div>
             <div class="quick-links">
                 <div class="quick-link" onclick="navigateTo('https://github.com')">
-                    <div class="icon">💻</div><div class="name">GitHub</div>
+                    <div class="icon">💻</div>
+                    <div class="name">GitHub</div>
                 </div>
                 <div class="quick-link" onclick="navigateTo('https://youtube.com')">
-                    <div class="icon">📺</div><div class="name">YouTube</div>
+                    <div class="icon">📺</div>
+                    <div class="name">YouTube</div>
                 </div>
                 <div class="quick-link" onclick="navigateTo('https://reddit.com')">
-                    <div class="icon">🗨️</div><div class="name">Reddit</div>
+                    <div class="icon">🗨️</div>
+                    <div class="name">Reddit</div>
                 </div>
                 <div class="quick-link" onclick="navigateTo('https://twitter.com')">
-                    <div class="icon">🐦</div><div class="name">Twitter</div>
+                    <div class="icon">🐦</div>
+                    <div class="name">Twitter</div>
                 </div>
             </div>
         </div></div>
     <script>
         const history = [];
         let historyIndex = -1;
+        const homeContent = document.querySelector('.home-screen').outerHTML;
+        let isHome = true;
+
         function addToHistory(url) {
-            if (historyIndex < history.length - 1) history.splice(historyIndex + 1);
+            if (historyIndex < history.length - 1) {
+                history.splice(historyIndex + 1);
+            }
             history.push(url);
-            historyIndex++;}
+            historyIndex++;
+        }
+
         function goBack() {
-            if (historyIndex > 0) { historyIndex--; loadUrl(history[historyIndex], false); }
+            if (historyIndex > 0) {
+                historyIndex--;
+                const url = history[historyIndex];
+                if (url === 'HOME') {
+                    showHome();
+                } else if (url.startsWith('SEARCH:')) {
+                    const query = url.substring(7);
+                    performSearch(query, false);
+                } else {
+                    loadUrl(url, false);
+                }
+            }
         }
+
         function goForward() {
-            if (historyIndex < history.length - 1) { historyIndex++; loadUrl(history[historyIndex], false); }
+            if (historyIndex < history.length - 1) {
+                historyIndex++;
+                const url = history[historyIndex];
+                if (url === 'HOME') {
+                    showHome();
+                } else if (url.startsWith('SEARCH:')) {
+                    const query = url.substring(7);
+                    performSearch(query, false);
+                } else {
+                    loadUrl(url, false);
+                }
+            }
         }
-        function reload() { if (historyIndex >= 0) loadUrl(history[historyIndex], false); }
-        function goHome() { location.reload(); }
+
+        function reload() {
+            if (isHome) {
+                showHome();
+            } else if (historyIndex >= 0 && history[historyIndex]) {
+                const url = history[historyIndex];
+                if (url.startsWith('SEARCH:')) {
+                    const query = url.substring(7);
+                    performSearch(query, false);
+                } else {
+                    loadUrl(url, false);
+                }
+            }
+        }
+
+        function goHome() {
+            showHome();
+            addToHistory('HOME');
+        }
+
+        function showHome() {
+            isHome = true;
+            document.getElementById('content').innerHTML = homeContent;
+            document.getElementById('urlInput').value = '';
+
+            const searchInput = document.getElementById('searchInput');
+            if (searchInput) {
+                searchInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') performSearch();
+                });
+            }
+        }
+
         function navigate() {
             const input = document.getElementById('urlInput').value.trim();
             if (input) {
@@ -326,30 +473,41 @@ fn main() {
                 if (!url.startsWith('http://') && !url.startsWith('https://')) {
                     url = url.includes('.') && !url.includes(' ') ? 'https://' + url : 'https://duckduckgo.com/?q=' + encodeURIComponent(url);
                 }
-                loadUrl(url);
+                navigateTo(url);
             }
         }
-        function navigateTo(url) { document.getElementById('urlInput').value = url; loadUrl(url); }
+
+        function navigateTo(url) {
+            isHome = false;
+            addToHistory(url);
+            document.getElementById('urlInput').value = url;
+            document.getElementById('content').innerHTML = '<div class="loading"><div class="spinner"></div><h2>Loading...</h2></div>';
+            window.ipc.postMessage(JSON.stringify({ action: 'load_url', url: url }));
+        }
+
         function loadUrl(url, addHistory = true) {
+            isHome = false;
             if (addHistory) addToHistory(url);
             document.getElementById('urlInput').value = url;
-            document.getElementById('content').innerHTML = `<div class="iframe-container"><iframe src="${url}" sandbox="allow-same-origin allow-scripts allow-popups allow-forms"></iframe></div>`;
+            document.getElementById('content').innerHTML = '<div class="loading"><div class="spinner"></div><h2>Loading...</h2></div>';
+            window.ipc.postMessage(JSON.stringify({ action: 'load_url', url: url }));
         }
-        function displayResults(results, query) {
-            if (!results || results.length === 0) {
-                document.getElementById('content').innerHTML = `
-                    <div class="loading">
-                        <div style="font-size: 80px; margin-bottom: 20px;">😔</div>
-                        <h2>No results found for "${query}"</h2>
-                        <p style="color: rgba(255,255,255,0.5); margin-top: 10px;">Try different keywords</p>
-                    </div>
-                `;
-                return;
+
+        function performSearch(query = null, addHistory = true) {
+            const searchQuery = query || document.getElementById('searchInput').value.trim();
+            if (searchQuery) {
+                if (addHistory) addToHistory('SEARCH:' + searchQuery);
+                document.getElementById('urlInput').value = `Search: ${searchQuery}`;
+                document.getElementById('content').innerHTML = '<div class="loading"><div class="spinner"></div><h2>Searching...</h2></div>';
+                window.ipc.postMessage(JSON.stringify({ action: 'search', url: searchQuery }));
             }
+        }
+
+        function displayResults(results, query) {
+            isHome = false;
             const html = `
-                <div class="results"><h2 style="color: rgba(255,255,255,0.9); margin-bottom: 30px; font-size: 28px;">
-                        Search Results for "${query}"
-                    </h2>
+                <div class="results">
+                    <h2>Search Results for "${query}"</h2>
                     ${results.map(r => `
                         <div class="result-item" onclick="navigateTo('${r.url.replace(/'/g, "\\'")}')">
                             <h3>${r.title}</h3>
@@ -361,16 +519,42 @@ fn main() {
             `;
             document.getElementById('content').innerHTML = html;
         }
-        async function performSearch() {
-            const query = document.getElementById('searchInput').value.trim();
-            if (query) {
-                document.getElementById('urlInput').value = `Search: ${query}`;
-                document.getElementById('content').innerHTML = `<div class="loading"><div class="spinner"></div><h2>Searching...</h2></div>`;
-                window.ipc.postMessage(JSON.stringify({ query: query }));
-            }
+
+        function loadProxiedContent(html, url) {
+            isHome = false;
+            const iframe = document.createElement('iframe');
+            iframe.style.width = '100%';
+            iframe.style.height = '100%';
+            iframe.style.border = 'none';
+            iframe.sandbox = 'allow-same-origin allow-scripts allow-popups allow-forms';
+
+            const container = document.createElement('div');
+            container.className = 'iframe-container';
+            container.appendChild(iframe);
+
+            document.getElementById('content').innerHTML = '';
+            document.getElementById('content').appendChild(container);
+
+            iframe.srcdoc = html;
         }
-        document.getElementById('urlInput').addEventListener('keypress', (e) => { if (e.key === 'Enter') navigate(); });
-        document.getElementById('searchInput').addEventListener('keypress', (e) => { if (e.key === 'Enter') performSearch(); });
+
+        function showError(message) {
+            document.getElementById('content').innerHTML = `
+                <div class="loading">
+                    <h2 style="color: #ef4444;">Error Loading Page</h2>
+                    <p style="color: rgba(255,255,255,0.7); margin-top: 20px; max-width: 600px; text-align: center;">${message}</p>
+                    <button class="go-btn" style="margin-top: 30px;" onclick="goBack()">Go Back</button>
+                </div>
+            `;
+        }
+
+        document.getElementById('urlInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') navigate();
+        });
+
+        document.getElementById('searchInput')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') performSearch();
+        });
     </script>
 </body>
 </html>"#;
@@ -378,35 +562,59 @@ fn main() {
     let webview: Arc<Mutex<Option<wry::WebView>>> = Arc::new(Mutex::new(None));
     let webview_clone = webview.clone();
 
-    let size = window.inner_size();
-
     let wv = WebViewBuilder::new()
-        .with_html(html_content)
-        .with_bounds(wry::Rect {
-            position: PhysicalPosition::new(0, 0).into(),
-            size: PhysicalSize::new(size.width, size.height).into(),
-        })
+        .with_html(home_html)
         .with_ipc_handler(move |request| {
-            #[derive(Deserialize)]
-            struct SearchRequest { query: String }
+            let body = request.body();
 
-            if let Ok(req) = serde_json::from_str::<String>(&request.body()) {
-                if let Ok(search_req) = serde_json::from_str::<SearchRequest>(&req) {
-                    let results = fetch_search_results(&search_req.query);
-                    if let Ok(json) = serde_json::to_string(&results) {
-                        let script = format!(
-                            "displayResults({}, '{}');",
-                            json,
-                            search_req.query.replace("'", "\\'")
-                        );
-                        if let Some(wv) = webview_clone.lock().unwrap().as_ref() {
-                            let _ = wv.evaluate_script(&script);
+            if let Ok(msg) = serde_json::from_str::<NavigateMessage>(body) {
+                match msg.action.as_str() {
+                    "search" => {
+                        if let Some(query) = msg.url {
+                            let results = fetch_search_results(&query);
+                            if let Ok(json) = serde_json::to_string(&results) {
+                                let script = format!(
+                                    "displayResults({}, '{}');",
+                                    json,
+                                    query.replace("'", "\\'").replace("\\", "\\\\")
+                                );
+                                if let Some(wv) = webview_clone.lock().unwrap().as_ref() {
+                                    let _ = wv.evaluate_script(&script);
+                                }
+                            }
                         }
                     }
+                    "load_url" => {
+                        if let Some(url) = msg.url {
+                            match fetch_through_proxy(&url) {
+                                Ok(html) => {
+                                    let escaped_html = html
+                                        .replace("\\", "\\\\")
+                                        .replace("`", "\\`")
+                                        .replace("${", "\\${");
+                                    let escaped_url = url.replace("'", "\\'");
+                                    let script = format!("loadProxiedContent(`{}`, '{}');", escaped_html, escaped_url);
+                                    if let Some(wv) = webview_clone.lock().unwrap().as_ref() {
+                                        let _ = wv.evaluate_script(&script);
+                                    }
+                                }
+                                Err(e) => {
+                                    let script = format!("showError('{}');", e.replace("'", "\\'"));
+                                    if let Some(wv) = webview_clone.lock().unwrap().as_ref() {
+                                        let _ = wv.evaluate_script(&script);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-            }
+            }})
+        .with_navigation_handler(|uri| {
+            println!("Navigating to: {}", uri);
+            true
         })
-        .build_as_child(&window)
+        .build(&window)
         .unwrap();
 
     *webview.lock().unwrap() = Some(wv);
@@ -415,5 +623,6 @@ fn main() {
         *control_flow = ControlFlow::Wait;
         if let Event::WindowEvent { event: WindowEvent::CloseRequested, .. } = event {
             *control_flow = ControlFlow::Exit;
-        }});
+        }
+    });
 }
